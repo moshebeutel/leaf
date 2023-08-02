@@ -1,15 +1,22 @@
 """Interfaces for ClientModel and ServerModel."""
-
+import copy
 from abc import ABC, abstractmethod
 import numpy as np
 import os
 import sys
-import tensorflow as tf
-
-from baseline_constants import ACCURACY_KEY
+from baseline_constants import TENSORFLOW_OR_PYTORCH, ACCURACY_KEY
+if TENSORFLOW_OR_PYTORCH == 'TF':
+    import tensorflow as tf
+    from utils.tf_utils import graph_size
+else:
+    assert TENSORFLOW_OR_PYTORCH == 'PT', f'TF_OR_PT indicates tensorflow or pytorch for nn models.' \
+                                          f' Got TENSORFLOW_OR_PYTORCH={TENSORFLOW_OR_PYTORCH}'
+    import torch
+    import torch.nn as nn
+    from torchvision.datasets import CelebA
+    from torch.utils.data import DataLoader
 
 from utils.model_utils import batch_data
-from utils.tf_utils import graph_size
 
 
 class Model(ABC):
@@ -71,7 +78,7 @@ class Model(ABC):
         """
         return None, None, None, None, None
 
-    def train(self, data, num_epochs=1, batch_size=10):
+    def train_model(self, data, num_epochs=1, batch_size=10):
         """
         Trains the client model.
 
@@ -156,20 +163,32 @@ class ServerModel:
         Args:
             clients: list of Client objects
         """
-        var_vals = {}
-        with self.model.graph.as_default():
-            all_vars = tf.trainable_variables()
-            for v in all_vars:
-                val = self.model.sess.run(v)
-                var_vals[v.name] = val
-        for c in clients:
-            with c.model.graph.as_default():
+        if TENSORFLOW_OR_PYTORCH == 'PT':
+            for c in clients:
+                c.model = copy.deepcopy(self.model)
+                for p in c.model.parameters():
+                    p.grad = torch.zeros_like(p, device=p.device)
+        else:
+            var_vals = {}
+            with self.model.graph.as_default():
                 all_vars = tf.trainable_variables()
                 for v in all_vars:
-                    v.load(var_vals[v.name], c.model.sess)
+                    val = self.model.sess.run(v)
+                    var_vals[v.name] = val
+            for c in clients:
+                with c.model.graph.as_default():
+                    all_vars = tf.trainable_variables()
+                    for v in all_vars:
+                        v.load(var_vals[v.name], c.model.sess)
 
     def save(self, path='checkpoints/model.ckpt'):
-        return self.model.saver.save(self.model.sess, path)
+        if TENSORFLOW_OR_PYTORCH == 'PT':
+            path += '.pt'
+            torch.save(self.model.state_dict(), path)
+            return path
+        else:
+            return self.model.saver.save(self.model.sess, path)
 
     def close(self):
-        self.model.close()
+        if TENSORFLOW_OR_PYTORCH == 'TF':
+            self.model.close()

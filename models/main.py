@@ -5,7 +5,18 @@ import numpy as np
 import os
 import sys
 import random
-import tensorflow as tf
+
+from baseline_constants import TENSORFLOW_OR_PYTORCH
+
+if TENSORFLOW_OR_PYTORCH == 'TF':
+    pass  # import tensorflow as tf
+else:
+    assert TENSORFLOW_OR_PYTORCH == 'PT', f'TF_OR_PT indicates tensorflow or pytorch for nn models.' \
+                                          f' Got TENSORFLOW_OR_PYTORCH={TENSORFLOW_OR_PYTORCH}'
+    import torch
+    import torch.nn as nn
+    from torchvision.datasets import CelebA
+    from torch.utils.data import DataLoader
 
 import metrics.writer as metrics_writer
 
@@ -20,23 +31,26 @@ from utils.model_utils import read_data
 STAT_METRICS_PATH = 'metrics/stat_metrics.csv'
 SYS_METRICS_PATH = 'metrics/sys_metrics.csv'
 
-def main():
 
+def main():
     args = parse_args()
 
     # Set the random seed if provided (affects client sampling, and batching)
     random.seed(1 + args.seed)
     np.random.seed(12 + args.seed)
-    tf.set_random_seed(123 + args.seed)
+    if TENSORFLOW_OR_PYTORCH=='TF':
+        tf.set_random_seed(123 + args.seed)
+    else:
+        torch.manual_seed(123 + args.seed)
 
     model_path = '%s/%s.py' % (args.dataset, args.model)
     if not os.path.exists(model_path):
         print('Please specify a valid dataset and a valid model.')
     model_path = '%s.%s' % (args.dataset, args.model)
-    
+
     print('############################## %s ##############################' % model_path)
     mod = importlib.import_module(model_path)
-    ClientModel = getattr(mod, 'ClientModel')
+    ClientModel = getattr(mod, 'ClientModel' if TENSORFLOW_OR_PYTORCH=='TF' else 'ClientModel_pt')
 
     tup = MAIN_PARAMS[args.dataset][args.t]
     num_rounds = args.num_rounds if args.num_rounds != -1 else tup[0]
@@ -44,7 +58,8 @@ def main():
     clients_per_round = args.clients_per_round if args.clients_per_round != -1 else tup[2]
 
     # Suppress tf warnings
-    tf.logging.set_verbosity(tf.logging.WARN)
+    if TENSORFLOW_OR_PYTORCH == 'TF':
+        tf.logging.set_verbosity(tf.logging.WARN)
 
     # Create 2 models
     model_params = MODEL_PARAMS[model_path]
@@ -54,7 +69,8 @@ def main():
         model_params = tuple(model_params_list)
 
     # Create client model, and share params with server model
-    tf.reset_default_graph()
+    if TENSORFLOW_OR_PYTORCH == 'TF':
+        tf.reset_default_graph()
     client_model = ClientModel(args.seed, *model_params)
 
     # Create server
@@ -80,16 +96,17 @@ def main():
         c_ids, c_groups, c_num_samples = server.get_clients_info(server.selected_clients)
 
         # Simulate server model training on selected clients' data
-        sys_metrics = server.train_model(num_epochs=args.num_epochs, batch_size=args.batch_size, minibatch=args.minibatch)
+        sys_metrics = server.train_model(num_epochs=args.num_epochs, batch_size=args.batch_size,
+                                         minibatch=args.minibatch)
         sys_writer_fn(i + 1, c_ids, sys_metrics, c_groups, c_num_samples)
-        
+
         # Update server model
         server.update_model()
 
         # Test model
         if (i + 1) % eval_every == 0 or (i + 1) == num_rounds:
             print_stats(i + 1, server, clients, client_num_samples, args, stat_writer_fn, args.use_val_set)
-    
+
     # Save server model
     ckpt_path = os.path.join('checkpoints', args.dataset)
     if not os.path.exists(ckpt_path):
@@ -99,6 +116,7 @@ def main():
 
     # Close models
     server.close_model()
+
 
 def online(clients):
     """We assume all users are always online."""
@@ -130,26 +148,25 @@ def setup_clients(dataset, model=None, use_val_set=False):
 
 
 def get_stat_writer_function(ids, groups, num_samples, args):
-
     def writer_fn(num_round, metrics, partition):
         metrics_writer.print_metrics(
-            num_round, ids, metrics, groups, num_samples, partition, args.metrics_dir, '{}_{}'.format(args.metrics_name, 'stat'))
+            num_round, ids, metrics, groups, num_samples, partition, args.metrics_dir,
+            '{}_{}'.format(args.metrics_name, 'stat'))
 
     return writer_fn
 
 
 def get_sys_writer_function(args):
-
     def writer_fn(num_round, ids, metrics, groups, num_samples):
         metrics_writer.print_metrics(
-            num_round, ids, metrics, groups, num_samples, 'train', args.metrics_dir, '{}_{}'.format(args.metrics_name, 'sys'))
+            num_round, ids, metrics, groups, num_samples, 'train', args.metrics_dir,
+            '{}_{}'.format(args.metrics_name, 'sys'))
 
     return writer_fn
 
 
 def print_stats(
-    num_round, server, clients, num_samples, args, writer, use_val_set):
-    
+        num_round, server, clients, num_samples, args, writer, use_val_set):
     train_stat_metrics = server.test_model(clients, set_to_use='train')
     print_metrics(train_stat_metrics, num_samples, prefix='train_')
     writer(num_round, train_stat_metrics, 'train')

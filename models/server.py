@@ -1,18 +1,13 @@
-import copy
-from collections import OrderedDict
-
 import numpy as np
-from baseline_constants import TENSORFLOW_OR_PYTORCH
-if TENSORFLOW_OR_PYTORCH == 'PT':
-    import torch
-
 from baseline_constants import BYTES_WRITTEN_KEY, BYTES_READ_KEY, LOCAL_COMPUTATIONS_KEY
 
+
 class Server:
-    
+
     def __init__(self, client_model):
         self.client_model = client_model
-        self.model = copy.copy(client_model) if TENSORFLOW_OR_PYTORCH=='PT' else client_model.get_params()
+        # self.model = copy.copy(client_model) if TENSORFLOW_OR_PYTORCH=='PT' else client_model.get_params()
+        self.model = client_model.get_params()
         self.selected_clients = []
         self.updates = []
 
@@ -74,32 +69,15 @@ class Server:
         return sys_metrics
 
     def update_model(self):
-        if TENSORFLOW_OR_PYTORCH == 'PT':
-            # initialize global model params
-            params = OrderedDict()
-            for n, p in self.model.named_parameters():
-                params[n] = torch.zeros_like(p.data)
+        total_weight = 0.
+        base = [0] * len(self.updates[0][1])
+        for (client_samples, client_model) in self.updates:
+            total_weight += client_samples
+            for i, v in enumerate(client_model):
+                base[i] += (client_samples * v.astype(np.float64))
+        averaged_soln = [v / total_weight for v in base]
 
-            for c in self.selected_clients:
-                for n, p in c.model.named_parameters():
-                    params[n] += p.data
-
-            # average parameters
-            for n, p in params.items():
-                params[n] = p / len(self.selected_clients)
-            # update new parameters
-            self.model.load_state_dict(params, strict=False)
-        else:
-
-            total_weight = 0.
-            base = [0] * len(self.updates[0][1])
-            for (client_samples, client_model) in self.updates:
-                total_weight += client_samples
-                for i, v in enumerate(client_model):
-                    base[i] += (client_samples * v.astype(np.float64))
-            averaged_soln = [v / total_weight for v in base]
-
-            self.model = averaged_soln
+        self.model = averaged_soln
         self.updates = []
 
     def test_model(self, clients_to_test, set_to_use='test'):
@@ -120,7 +98,7 @@ class Server:
             client.model.set_params(self.model)
             c_metrics = client.test(set_to_use)
             metrics[client.id] = c_metrics
-        
+
         return metrics
 
     def get_clients_info(self, clients):
@@ -143,7 +121,7 @@ class Server:
         """Saves the server model on checkpoints/dataset/model.ckpt."""
         # Save server model
         self.client_model.set_params(self.model)
-        model_sess =  self.client_model.sess
+        model_sess = self.client_model.sess
         return self.client_model.saver.save(model_sess, path)
 
     def close_model(self):

@@ -9,21 +9,18 @@ import random
 from baseline_constants import TENSORFLOW_OR_PYTORCH
 
 if TENSORFLOW_OR_PYTORCH == 'TF':
-    pass  # import tensorflow as tf
+    import tensorflow as tf
+    from server import Server
 else:
     assert TENSORFLOW_OR_PYTORCH == 'PT', f'TF_OR_PT indicates tensorflow or pytorch for nn models.' \
                                           f' Got TENSORFLOW_OR_PYTORCH={TENSORFLOW_OR_PYTORCH}'
     import torch
-    import torch.nn as nn
-    from torchvision.datasets import CelebA
-    from torch.utils.data import DataLoader
+    from server_pt import Server
 
 import metrics.writer as metrics_writer
 
 from baseline_constants import MAIN_PARAMS, MODEL_PARAMS
 from client import Client
-from server import Server
-from model import ServerModel
 
 from utils.args import parse_args
 from utils.model_utils import read_data
@@ -38,7 +35,7 @@ def main():
     # Set the random seed if provided (affects client sampling, and batching)
     random.seed(1 + args.seed)
     np.random.seed(12 + args.seed)
-    if TENSORFLOW_OR_PYTORCH=='TF':
+    if TENSORFLOW_OR_PYTORCH == 'TF':
         tf.set_random_seed(123 + args.seed)
     else:
         torch.manual_seed(123 + args.seed)
@@ -46,11 +43,11 @@ def main():
     model_path = '%s/%s.py' % (args.dataset, args.model)
     if not os.path.exists(model_path):
         print('Please specify a valid dataset and a valid model.')
-    model_path = '%s.%s' % (args.dataset, args.model)
+    model_path = '%s.%s' % (args.dataset, args.model if TENSORFLOW_OR_PYTORCH == 'TF' else args.model + '_pt')
 
     print('############################## %s ##############################' % model_path)
     mod = importlib.import_module(model_path)
-    ClientModel = getattr(mod, 'ClientModel' if TENSORFLOW_OR_PYTORCH=='TF' else 'ClientModel_pt')
+    ClientModel = getattr(mod, 'ClientModel')
 
     tup = MAIN_PARAMS[args.dataset][args.t]
     num_rounds = args.num_rounds if args.num_rounds != -1 else tup[0]
@@ -62,7 +59,7 @@ def main():
         tf.logging.set_verbosity(tf.logging.WARN)
 
     # Create 2 models
-    model_params = MODEL_PARAMS[model_path]
+    model_params = MODEL_PARAMS[model_path.replace('_pt', '')]
     if args.lr != -1:
         model_params_list = list(model_params)
         model_params_list[0] = args.lr
@@ -142,7 +139,7 @@ def setup_clients(dataset, model=None, use_val_set=False):
 
     users, groups, train_data, test_data = read_data(train_data_dir, test_data_dir)
 
-    clients = create_clients(users, groups, train_data, test_data, model)
+    clients = create_clients(users[:50], groups, train_data, test_data, model)
 
     return clients
 
@@ -165,8 +162,7 @@ def get_sys_writer_function(args):
     return writer_fn
 
 
-def print_stats(
-        num_round, server, clients, num_samples, args, writer, use_val_set):
+def print_stats(num_round, server, clients, num_samples, args, writer, use_val_set):
     train_stat_metrics = server.test_model(clients, set_to_use='train')
     print_metrics(train_stat_metrics, num_samples, prefix='train_')
     writer(num_round, train_stat_metrics, 'train')

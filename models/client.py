@@ -25,6 +25,7 @@ class Client:
             update: set of weights
             update_size: number of bytes in update
         """
+        print(f'Client {self.id} train')
         if minibatch is None:
             data = self.train_data
             comp, update = self.model.train_model(data, num_epochs, batch_size)
@@ -49,6 +50,7 @@ class Client:
             dict of metrics returned by the model.
         """
         assert set_to_use in ['train', 'test', 'val']
+        print(f'Client {self.id} test using {set_to_use} set')
         if set_to_use == 'train':
             data = self.train_data
         elif set_to_use == 'test' or set_to_use == 'val':

@@ -19,8 +19,13 @@ MAIN_PARAMS = {
     'celeba': {
         'small': (30, 10, 2),
         'medium': (100, 10, 2),
-        'large': (400, 20, 2)
+        'large': (1, 1, 5)
     },
+    # 'celeba': {
+    #     'small': (30, 10, 2),
+    #     'medium': (100, 10, 2),
+    #     'large': (400, 20, 2)
+    # },
     'synthetic': {
         'small': (6, 2, 2),
         'medium': (8, 2, 2),
